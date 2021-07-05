@@ -1,0 +1,102 @@
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+fn main() {
+    for (plot_name, column_idx) in PLOTS.iter() {
+        println!("{}", plot_name);
+
+        // plot_defs output uses $COLUMN_IDX so replace $PLOTS before $COLUMN_IDX
+        let gnuplot = GNUPLOT_TEMPLATE
+            .replace("$PLOTS", &plot_defs())
+            .replace("$COLUMN_IDX", &column_idx.to_string())
+            .replace("$YLABEL", &plot_name.replace("_", " "));
+
+        let process = Command::new("gnuplot")
+            .arg("-p")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Unable to spawn gnuplot process");
+
+        process
+            .stdin
+            .as_ref()
+            .unwrap()
+            .write_all(gnuplot.as_bytes())
+            .expect("Unable to write gnuplot file to gnuplot stdin");
+
+        let output = process.wait_with_output().expect("gnuplot failed");
+
+        std::fs::write(format!("{}.png", plot_name), output.stdout)
+            .expect("Unable to write gnuplot output to file");
+    }
+}
+
+const FILES: [(&str, &str); 2] = [
+    ("master_copying_gc.csv", "Simple scheduling"),
+    ("scheduling.csv", "Smart scheduling"),
+];
+
+fn plot_defs() -> String {
+    FILES
+        .iter()
+        .map(|(file, name)| {
+            format!(
+                r##""{}" using ($0+1):$COLUMN_IDX with linespoints title "{}", "##,
+                file, name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+const GNUPLOT_TEMPLATE: &str = r###"
+set terminal png notransparent rounded giant font "JetBrains Mono" 24 \
+  size 1200,960 
+
+set xtics nomirror
+set ytics nomirror
+
+set style line 80 lt 0 lc rgb "#808080"
+
+set border 3 back ls 80 
+
+set style line 81 lt 0 lc rgb "#808080" lw 0.5
+
+set grid xtics
+set grid ytics
+set grid mxtics
+set grid mytics
+
+set grid back ls 81
+
+set style line 1 lt 1 lc rgb "#A00000" lw 2 pt 7 ps 1.5
+set style line 2 lt 1 lc rgb "#00A000" lw 2 pt 11 ps 1.5
+set style line 3 lt 1 lc rgb "#5060D0" lw 2 pt 9 ps 1.5
+set style line 4 lt 1 lc rgb "#0000A0" lw 2 pt 8 ps 1.5
+set style line 5 lt 1 lc rgb "#D0D000" lw 2 pt 13 ps 1.5
+set style line 6 lt 1 lc rgb "#00D0D0" lw 2 pt 12 ps 1.5
+set style line 7 lt 1 lc rgb "#B200B2" lw 2 pt 5 ps 1.5
+
+set datafile separator ','
+
+set xlabel "call"
+set ylabel "$YLABEL"
+
+set xrange [0:1000]
+
+plot $PLOTS
+"###;
+
+/// Index of "instructions" column in drun generated CSVs
+const INSTRUCTIONS_COL_IDX: usize = 3;
+
+/// Column indices and names of plots. Note that column indices are for gnuplot, i.e. they start
+/// from 1.
+const PLOTS: [(&str, usize); 4] = [
+    ("instructions", INSTRUCTIONS_COL_IDX),
+    ("accessed_host_pages", 4),
+    ("dirtied_host_pages", 5),
+    ("total_Wasm_pages_in_use", 6),
+];
