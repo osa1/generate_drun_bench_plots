@@ -8,7 +8,7 @@ fn main() {
     let files: Vec<(NamedTempFile, &'static str)> = FILES
         .iter()
         .map(|(file_name, plot_name)| {
-            let tmp = add_cumulative_columns(Path::new(file_name)).unwrap();
+            let tmp = add_cumulative_columns(Path::new(file_name));
             (tmp, *plot_name)
         })
         .collect();
@@ -46,62 +46,21 @@ fn main() {
     std::mem::forget(files);
 }
 
-#[derive(Debug)]
-enum Error {
-    CSV1(csv::Error),
-    CSV2(csv::IntoInnerError<csv::Writer<NamedTempFile>>),
-    IntParseError(std::num::ParseIntError),
-    IO(std::io::Error),
-    String(String),
-}
-
-impl From<csv::Error> for Error {
-    fn from(err: csv::Error) -> Self {
-        Error::CSV1(err)
-    }
-}
-
-impl From<csv::IntoInnerError<csv::Writer<NamedTempFile>>> for Error {
-    fn from(err: csv::IntoInnerError<csv::Writer<NamedTempFile>>) -> Self {
-        Error::CSV2(err)
-    }
-}
-
-impl From<String> for Error {
-    fn from(err: String) -> Self {
-        Error::String(err)
-    }
-}
-
-impl From<std::num::ParseIntError> for Error {
-    fn from(err: std::num::ParseIntError) -> Self {
-        Error::IntParseError(err)
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::IO(err)
-    }
-}
-
 // Given a canister perf CSV file path, write to a temporary path with a "total instructions",
 // "total accessed host pages", and "total dirtied host pages" columns.
-fn add_cumulative_columns(csv_path: &Path) -> Result<NamedTempFile, Error> {
+fn add_cumulative_columns(csv_path: &Path) -> NamedTempFile {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
-        .from_path(csv_path)?;
+        .from_path(csv_path)
+        .unwrap();
 
-    let mut headers = reader.headers()?.to_owned();
+    let mut headers = reader.headers().unwrap().to_owned();
 
     headers.push_field("total instructions");
     headers.push_field("total accessed host pages");
     headers.push_field("total dirtied host pages");
 
-    let mut records: Vec<csv::StringRecord> = vec![];
-    for record in reader.into_records() {
-        records.push(record?);
-    }
+    let mut records: Vec<csv::StringRecord> = reader.into_records().map(|r| r.unwrap()).collect();
 
     let mut total_instructions: u64 = 0;
     let mut total_accessed_host_pages: u64 = 0;
@@ -110,8 +69,9 @@ fn add_cumulative_columns(csv_path: &Path) -> Result<NamedTempFile, Error> {
     for record in &mut records {
         let instructions = record
             .get(INSTRUCTIONS_COL_IDX - 1)
-            .ok_or_else(|| "CSV record doesn't have enough columns".to_owned())?
-            .parse::<u64>()?;
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
 
         total_instructions += instructions;
 
@@ -138,15 +98,15 @@ fn add_cumulative_columns(csv_path: &Path) -> Result<NamedTempFile, Error> {
         record.push_field(&total_dirtied_host_pages.to_string());
     }
 
-    let tmp_file = NamedTempFile::new()?;
+    let tmp_file = NamedTempFile::new().unwrap();
     let mut csv_writer = csv::Writer::from_writer(tmp_file);
-    csv_writer.write_record(&headers)?;
+    csv_writer.write_record(&headers).unwrap();
 
     for record in records {
-        csv_writer.write_record(&record)?;
+        csv_writer.write_record(&record).unwrap();
     }
 
-    Ok(csv_writer.into_inner()?)
+    csv_writer.into_inner().unwrap()
 }
 
 const FILES: [(&str, &str); 2] = [
