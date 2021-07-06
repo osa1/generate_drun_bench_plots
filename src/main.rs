@@ -8,7 +8,7 @@ fn main() {
     let files: Vec<(NamedTempFile, &'static str)> = FILES
         .iter()
         .map(|(file_name, plot_name)| {
-            let tmp = add_total_instructions_column(Path::new(file_name)).unwrap();
+            let tmp = add_cumulative_columns(Path::new(file_name)).unwrap();
             (tmp, *plot_name)
         })
         .collect();
@@ -85,9 +85,9 @@ impl From<std::io::Error> for Error {
     }
 }
 
-// Given a canister perf CSV file path, write to a temporary path with a "total instructions"
-// column appended. "total instructions" is cumulative of "instructions".
-fn add_total_instructions_column(csv_path: &Path) -> Result<NamedTempFile, Error> {
+// Given a canister perf CSV file path, write to a temporary path with a "total instructions",
+// "total accessed host pages", and "total dirtied host pages" columns.
+fn add_cumulative_columns(csv_path: &Path) -> Result<NamedTempFile, Error> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_path(csv_path)?;
@@ -95,6 +95,8 @@ fn add_total_instructions_column(csv_path: &Path) -> Result<NamedTempFile, Error
     let mut headers = reader.headers()?.to_owned();
 
     headers.push_field("total instructions");
+    headers.push_field("total accessed host pages");
+    headers.push_field("total dirtied host pages");
 
     let mut records: Vec<csv::StringRecord> = vec![];
     for record in reader.into_records() {
@@ -102,6 +104,9 @@ fn add_total_instructions_column(csv_path: &Path) -> Result<NamedTempFile, Error
     }
 
     let mut total_instructions: u64 = 0;
+    let mut total_accessed_host_pages: u64 = 0;
+    let mut total_dirtied_host_pages: u64 = 0;
+
     for record in &mut records {
         let instructions = record
             .get(INSTRUCTIONS_COL_IDX - 1)
@@ -111,6 +116,26 @@ fn add_total_instructions_column(csv_path: &Path) -> Result<NamedTempFile, Error
         total_instructions += instructions;
 
         record.push_field(&total_instructions.to_string());
+
+        let accessed_host_pages = record
+            .get(ACCESSED_HOST_PAGES_COL_IDX - 1)
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+
+        total_accessed_host_pages += accessed_host_pages;
+
+        record.push_field(&total_accessed_host_pages.to_string());
+
+        let dirtied_host_pages = record
+            .get(DIRTIED_HOST_PAGES_COL_IDX - 1)
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+
+        total_dirtied_host_pages += dirtied_host_pages;
+
+        record.push_field(&total_dirtied_host_pages.to_string());
     }
 
     let tmp_file = NamedTempFile::new()?;
@@ -184,12 +209,20 @@ plot $PLOTS
 /// 1-based index of "instructions" column in drun generated CSVs
 const INSTRUCTIONS_COL_IDX: usize = 3;
 
+/// 1-based index of "accessed host pages" column in drun generated CSVs
+const ACCESSED_HOST_PAGES_COL_IDX: usize = 4;
+
+/// 1-based index of "dirtied host pages" column in drun generated CSVs
+const DIRTIED_HOST_PAGES_COL_IDX: usize = 5;
+
 /// 1-based column indices and names of plots. Note that column indices are for gnuplot, i.e. they
-/// start from 1. Make sure to run `add_total_instructions_column` before using this.
-const PLOTS: [(&str, usize); 5] = [
+/// start from 1. Make sure to run `add_cumulative_fields` before using this.
+const PLOTS: [(&str, usize); 7] = [
     ("instructions", INSTRUCTIONS_COL_IDX),
-    ("accessed_host_pages", 4),
-    ("dirtied_host_pages", 5),
+    ("accessed_host_pages", ACCESSED_HOST_PAGES_COL_IDX),
+    ("dirtied_host_pages", DIRTIED_HOST_PAGES_COL_IDX),
     ("total_Wasm_pages_in_use", 6),
     ("total_instructions", 7),
+    ("total_accessed_host_pages", 8),
+    ("total_dirtied_host_pages", 9),
 ];
