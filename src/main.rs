@@ -1,13 +1,24 @@
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
+use tempfile::NamedTempFile;
+
 fn main() {
+    let files: Vec<(NamedTempFile, &'static str)> = FILES
+        .iter()
+        .map(|(file_name, plot_name)| {
+            let tmp = add_total_instructions_column(Path::new(file_name)).unwrap();
+            (tmp, *plot_name)
+        })
+        .collect();
+
     for (plot_name, column_idx) in PLOTS.iter() {
         println!("{}", plot_name);
 
         // plot_defs output uses $COLUMN_IDX so replace $PLOTS before $COLUMN_IDX
         let gnuplot = GNUPLOT_TEMPLATE
-            .replace("$PLOTS", &plot_defs())
+            .replace("$PLOTS", &plot_defs(&files))
             .replace("$COLUMN_IDX", &column_idx.to_string())
             .replace("$YLABEL", &plot_name.replace("_", " "));
 
@@ -31,6 +42,86 @@ fn main() {
         std::fs::write(format!("{}.png", plot_name), output.stdout)
             .expect("Unable to write gnuplot output to file");
     }
+
+    std::mem::forget(files);
+}
+
+#[derive(Debug)]
+enum Error {
+    CSV1(csv::Error),
+    CSV2(csv::IntoInnerError<csv::Writer<NamedTempFile>>),
+    IntParseError(std::num::ParseIntError),
+    IO(std::io::Error),
+    String(String),
+}
+
+impl From<csv::Error> for Error {
+    fn from(err: csv::Error) -> Self {
+        Error::CSV1(err)
+    }
+}
+
+impl From<csv::IntoInnerError<csv::Writer<NamedTempFile>>> for Error {
+    fn from(err: csv::IntoInnerError<csv::Writer<NamedTempFile>>) -> Self {
+        Error::CSV2(err)
+    }
+}
+
+impl From<String> for Error {
+    fn from(err: String) -> Self {
+        Error::String(err)
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(err: std::num::ParseIntError) -> Self {
+        Error::IntParseError(err)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::IO(err)
+    }
+}
+
+// Given a canister perf CSV file path, write to a temporary path with a "total instructions"
+// column appended. "total instructions" is cumulative of "instructions".
+fn add_total_instructions_column(csv_path: &Path) -> Result<NamedTempFile, Error> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(csv_path)?;
+
+    let mut headers = reader.headers()?.to_owned();
+
+    headers.push_field("total instructions");
+
+    let mut records: Vec<csv::StringRecord> = vec![];
+    for record in reader.into_records() {
+        records.push(record?);
+    }
+
+    let mut total_instructions: u64 = 0;
+    for record in &mut records {
+        let instructions = record
+            .get(INSTRUCTIONS_COL_IDX - 1)
+            .ok_or_else(|| "CSV record doesn't have enough columns".to_owned())?
+            .parse::<u64>()?;
+
+        total_instructions += instructions;
+
+        record.push_field(&total_instructions.to_string());
+    }
+
+    let tmp_file = NamedTempFile::new()?;
+    let mut csv_writer = csv::Writer::from_writer(tmp_file);
+    csv_writer.write_record(&headers)?;
+
+    for record in records {
+        csv_writer.write_record(&record)?;
+    }
+
+    Ok(csv_writer.into_inner()?)
 }
 
 const FILES: [(&str, &str); 2] = [
@@ -38,13 +129,14 @@ const FILES: [(&str, &str); 2] = [
     ("scheduling.csv", "Smart scheduling"),
 ];
 
-fn plot_defs() -> String {
-    FILES
+fn plot_defs(files: &[(NamedTempFile, &'static str)]) -> String {
+    files
         .iter()
         .map(|(file, name)| {
             format!(
                 r##""{}" using ($0+1):$COLUMN_IDX with linespoints title "{}", "##,
-                file, name
+                file.path().to_string_lossy(),
+                name,
             )
         })
         .collect::<Vec<_>>()
@@ -89,14 +181,15 @@ set xrange [0:1000]
 plot $PLOTS
 "###;
 
-/// Index of "instructions" column in drun generated CSVs
+/// 1-based index of "instructions" column in drun generated CSVs
 const INSTRUCTIONS_COL_IDX: usize = 3;
 
-/// Column indices and names of plots. Note that column indices are for gnuplot, i.e. they start
-/// from 1.
-const PLOTS: [(&str, usize); 4] = [
+/// 1-based column indices and names of plots. Note that column indices are for gnuplot, i.e. they
+/// start from 1. Make sure to run `add_total_instructions_column` before using this.
+const PLOTS: [(&str, usize); 5] = [
     ("instructions", INSTRUCTIONS_COL_IDX),
     ("accessed_host_pages", 4),
     ("dirtied_host_pages", 5),
     ("total_Wasm_pages_in_use", 6),
+    ("total_instructions", 7),
 ];
