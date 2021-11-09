@@ -110,8 +110,8 @@ fn add_cumulative_columns(csv_path: &Path) -> NamedTempFile {
 }
 
 const FILES: [(&str, &str); 2] = [
-    ("master_copying_gc.csv", "Simple scheduling"),
-    ("scheduling.csv", "Smart scheduling"),
+    ("canister_perf_copying_gc.csv", "Copying GC"),
+    ("canister_perf_compacting_gc.csv", "Compacting GC"),
 ];
 
 fn plot_defs(files: &[(NamedTempFile, &'static str)]) -> String {
@@ -161,7 +161,7 @@ set datafile separator ','
 set xlabel "call"
 set ylabel "$YLABEL"
 
-set xrange [0:1000]
+set xrange [0:100]
 
 plot $PLOTS
 "###;
